@@ -1,10 +1,11 @@
-package TfcAnvilHelper.util;
+package TfcAnvilHelper;
 
 import java.util.*;
 
 public class AnvilCalculator {
     // Карта действий и их значений TFC
     public static final Map<String, Integer> ACTIONS = Map.of(
+            "0", 0,
             "+2", 2,
             "+7", 7,
             "+13", 13,
