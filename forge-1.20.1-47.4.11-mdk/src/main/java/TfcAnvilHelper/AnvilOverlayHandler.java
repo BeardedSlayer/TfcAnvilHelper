@@ -19,6 +19,10 @@ import java.util.*;
 
 @Mod.EventBusSubscriber(modid = "tfcanvilhelper", bus = Mod.EventBusSubscriber.Bus.FORGE, value = Dist.CLIENT)
 public class AnvilOverlayHandler {
+    private static long lastStepTime = 0; // Время последнего успешного нажатия
+    private static final int ANIM_DURATION = 350; // Длительность анимации в мс
+    private static final int STEP_GAP = 10; // Расстояние между числами в списке
+
     private static boolean overlayOpen = false;
     private static int buttonX = Integer.MIN_VALUE;
     private static int buttonY = Integer.MIN_VALUE;
@@ -52,7 +56,7 @@ public class AnvilOverlayHandler {
     // ===== Result toast UI constants =====
     private static final int TOAST_PADDING_X = 8;
     private static final int TOAST_PADDING_Y = 6;
-    private static final int TOAST_BOTTOM_MARGIN = 12;
+    private static final int TOAST_BOTTOM_MARGIN = 40;
 
     private static final int TOAST_CLOSE_W = 12;
     private static final int TOAST_CLOSE_H = 12;
@@ -170,8 +174,55 @@ public class AnvilOverlayHandler {
         return s.substring(0, lo) + dots;
     }
 
+    private static boolean isClickOnAnyTfcStepButton(int mx, int my, AbstractContainerScreen<?> screen) {
+        int guiLeft = screen.getGuiLeft();
+        int guiTop = screen.getGuiTop();
+
+        // Относительные координаты клика внутри GUI (от 0 до ширины/высоты окна)
+        int relX = mx - guiLeft;
+        int relY = my - guiTop;
+
+        // Выводим в консоль, чтобы ты мог увидеть координаты "нерабочих" кнопок
+        // System.out.println("[TfcAnvilHelper] Click at relX=" + relX + ", relY=" + relY);
+
+        // Расширенная зона (от 5 до 175 по X, от 40 до 120 по Y)
+        // ТФК кнопки обычно находятся в этом районе.
+        boolean hit = relX >= 5 && relX < 175 && relY >= 40 && relY < 120;
+
+        return hit;
+    }
+
+    private static String getActionAt(int mx, int my, AbstractContainerScreen<?> screen) {
+        int relX = mx - screen.getGuiLeft();
+        int relY = my - screen.getGuiTop();
+
+        // ВЕРХНИЙ РЯД (Y от 50 до 66)
+        if (relY >= 50 && relY <= 66) {
+            if (relX >= 53 && relX <= 69) return "-3";
+            if (relX >= 71 && relX <= 87) return "-6";
+            if (relX >= 89 && relX <= 104) return "+2";
+            if (relX >= 107 && relX <= 123) return "+7";
+        }
+
+        // НИЖНИЙ РЯД (Y от 68 до 84)
+        if (relY >= 68 && relY <= 84) {
+            if (relX >= 53 && relX <= 69) return "-9";
+            if (relX >= 71 && relX <= 87) return "-15";
+            if (relX >= 89 && relX <= 105) return "+13";
+            if (relX >= 107 && relX <= 123) return "+16";
+        }
+
+        return null;
+    }
+
+
+
+
     private static ToastRect computeToast() {
-        if (resultText == null || resultText.isEmpty()) return null;
+        // Тост существует, если есть или текст, или план (даже завершенный)
+        if ((resultText == null || resultText.isEmpty()) && plannedActions.isEmpty()) {
+            return null;
+        }
 
         Minecraft mc = Minecraft.getInstance();
         int screenW = mc.getWindow().getGuiScaledWidth();
@@ -183,13 +234,37 @@ public class AnvilOverlayHandler {
         int maxTextW = maxToastW - (TOAST_PADDING_X * 2) - (TOAST_CLOSE_GAP + TOAST_CLOSE_W);
         if (maxTextW < 20) maxTextW = 20;
 
-        String display = ellipsizeToWidth(resultText, maxTextW);
+        // вместо старого String display = ...:
+        // Логика формирования текста в плашке
+        String base;
+        if (!plannedActions.isEmpty()) {
+            if (currentStepIndex < plannedActions.size()) {
+                // Если шаги еще остались — показываем их
+                String current = plannedActions.get(currentStepIndex);
+                String next = (currentStepIndex + 1 < plannedActions.size())
+                        ? plannedActions.get(currentStepIndex + 1)
+                        : "";
+                base = next.isEmpty()
+                        ? ("Шаг: " + current)
+                        : ("Шаг: " + current + " → " + next);
+            } else {
+                // Если индекс дошел до конца списка — значит всё выполнено
+                base = "Готово!";
+            }
+        } else {
+            // Если плана вообще нет (например, еще не нажимали Рассчитать)
+            base = resultText != null ? resultText : "";
+        }
 
-        int textW = mc.font.width(display);
+        String display = ellipsizeToWidth(base, maxTextW);
+
+
+// дальше идёт твой существующий код:
+        int textW = Minecraft.getInstance().font.width(display);
         int boxW = textW + TOAST_PADDING_X * 2 + TOAST_CLOSE_GAP + TOAST_CLOSE_W;
         boxW = Math.min(boxW, maxToastW);
 
-        int boxH = mc.font.lineHeight + TOAST_PADDING_Y * 2;
+        int boxH = Minecraft.getInstance().font.lineHeight + TOAST_PADDING_Y * 2;
 
         int x0 = (screenW - boxW) / 2;
         int y0 = screenH - boxH - TOAST_BOTTOM_MARGIN;
@@ -198,12 +273,14 @@ public class AnvilOverlayHandler {
         tr.x0 = x0; tr.y0 = y0; tr.w = boxW; tr.h = boxH;
         tr.displayText = display;
 
+
         int cx0 = x0 + boxW - TOAST_PADDING_X - TOAST_CLOSE_W;
         int cy0 = y0 + (boxH - TOAST_CLOSE_H) / 2;
         tr.closeX0 = cx0; tr.closeY0 = cy0;
         tr.closeX1 = cx0 + TOAST_CLOSE_W; tr.closeY1 = cy0 + TOAST_CLOSE_H;
 
         return tr;
+
     }
 
     private static void drawResultToast(GuiGraphics g) {
@@ -218,6 +295,7 @@ public class AnvilOverlayHandler {
         g.fill(tr.x0 + tr.w - 1, tr.y0, tr.x0 + tr.w, tr.y0 + tr.h, 0xFF444444);
 
         Minecraft mc = Minecraft.getInstance();
+        System.out.println("[TfcAnvilHelper] toast display='" + tr.displayText + "'");
         g.drawString(mc.font, tr.displayText, tr.x0 + TOAST_PADDING_X, tr.y0 + TOAST_PADDING_Y, 0xFFFFFF);
 
         // close button (X)
@@ -410,9 +488,23 @@ public class AnvilOverlayHandler {
         // click close on toast
         if (isClickOnToastClose(mx, my)) {
             resultText = "";
+            plannedActions.clear(); // Очищаем план, чтобы плашка исчезла
+            currentStepIndex = 0;
             event.setCanceled(true);
             return;
         }
+
+
+        if (isClickOnToast(mx, my) && !isClickOnToastClose(mx, my)) {
+            if (!plannedActions.isEmpty() && currentStepIndex < plannedActions.size()) {
+                currentStepIndex++;
+                System.out.println("[TfcAnvilHelper] toast click, step = " + currentStepIndex);
+            }
+            event.setCanceled(true);
+            return;
+        }
+
+
         // block clicks under the toast
         if (isClickOnToast(mx, my)) {
             event.setCanceled(true);
@@ -432,7 +524,7 @@ public class AnvilOverlayHandler {
 
         Layout l = layout();
 
-        // click in dropdown: don't start drag
+        // click in dropdown: don't start dragonMouseButtonPressed
         if (activeMenu >= 0 && activeMenu < 3) {
             int menuX = l.btnX[activeMenu];
             int menuY = l.btnY + l.btnH + 4;
@@ -468,21 +560,21 @@ public class AnvilOverlayHandler {
             event.setCanceled(true);
         }
     }
+        @SubscribeEvent
+        public static void onMouseButtonReleased(ScreenEvent.MouseButtonReleased.Pre event) {
+            Screen screen = event.getScreen();
+            if (!(screen instanceof AbstractContainerScreen<?> containerScreen)) return;
 
-    @SubscribeEvent
-    public static void onMouseButtonReleased(ScreenEvent.MouseButtonReleased.Pre event) {
-        Screen screen = event.getScreen();
-        if (!(screen instanceof AbstractContainerScreen<?>)) return;
+            String cls = screen.getClass().getName();
+            if (!cls.contains("AnvilScreen") && !cls.contains("InventoryScreen")) return;
 
-        String cls = screen.getClass().getName();
-        if (!cls.contains("AnvilScreen") && !cls.contains("InventoryScreen")) return;
+            if (event.getButton() != 0) return;
 
-        if (event.getButton() != 0) return;
+            int mx = (int) Math.round(event.getMouseX());
+            int my = (int) Math.round(event.getMouseY());
 
-        int mx = (int) Math.round(event.getMouseX());
-        int my = (int) Math.round(event.getMouseY());
 
-        if (dragTarget == 1) {
+            if (dragTarget == 1) {
             if (isDragging) savePositions();
             else {
                 if (isOnMainButton(mx, my)) {
@@ -504,7 +596,22 @@ public class AnvilOverlayHandler {
             event.setCanceled(true);
         }
 
-        if (!overlayOpen) return;
+            // Обработка нажатий на кнопки ТФК-наковальни
+            String clickedAction = getActionAt(mx, my, containerScreen);
+            if (clickedAction != null && !plannedActions.isEmpty() && currentStepIndex < plannedActions.size()) {
+                String expectedAction = plannedActions.get(currentStepIndex);
+
+                // Если нажали именно то, что просит калькулятор
+                if (clickedAction.equals(expectedAction)) {
+                    currentStepIndex++;
+                    System.out.println("[TfcAnvilHelper] Correct step! Next index: " + currentStepIndex);
+                } else {
+                    System.out.println("[TfcAnvilHelper] Wrong step! Clicked: " + clickedAction + ", Expected: " + expectedAction);
+                }
+                // Мы не отменяем событие, чтобы удар в ТФК засчитался в любом случае
+            }
+
+            if (!overlayOpen) return;
 
         Layout l = layout();
 
@@ -552,6 +659,10 @@ public class AnvilOverlayHandler {
         }
     }
 
+    // План шагов для пошагового вывода
+    private static final List<String> plannedActions = new ArrayList<>();
+    private static int currentStepIndex = 0;
+
     private static void performCalculation() {
         if (targetNumber.isEmpty()) { resultText = "Введите целевое число!"; return; }
         int target;
@@ -574,5 +685,13 @@ public class AnvilOverlayHandler {
             res.append(e.getValue()).append("x").append(e.getKey());
         }
         resultText = res.toString();
+
+        // Заполняем пошаговый план
+        plannedActions.clear();
+        plannedActions.addAll(solution);
+        currentStepIndex = 0;
+        System.out.println("[TfcAnvilHelper] plannedActions = " + plannedActions);
+
     }
+
 }
