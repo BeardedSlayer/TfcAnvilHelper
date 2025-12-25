@@ -9,6 +9,8 @@ import net.minecraftforge.client.event.ScreenEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import org.lwjgl.glfw.GLFW;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MutableComponent;
 
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -219,7 +221,7 @@ public class AnvilOverlayHandler {
 
 
     private static ToastRect computeToast() {
-        // Тост существует, если есть или текст, или план (даже завершенный)
+        // Тост существует, если есть или текст, или план
         if ((resultText == null || resultText.isEmpty()) && plannedActions.isEmpty()) {
             return null;
         }
@@ -228,43 +230,34 @@ public class AnvilOverlayHandler {
         int screenW = mc.getWindow().getGuiScaledWidth();
         int screenH = mc.getWindow().getGuiScaledHeight();
 
-        int maxToastW = Math.max(60, screenW - TOAST_MAX_WIDTH_MARGIN * 2);
-
-        // место под текст: общие отступы + место под крестик
-        int maxTextW = maxToastW - (TOAST_PADDING_X * 2) - (TOAST_CLOSE_GAP + TOAST_CLOSE_W);
-        if (maxTextW < 20) maxTextW = 20;
-
-        // вместо старого String display = ...:
-        // Логика формирования текста в плашке
-        String base;
+        // 1. Формируем компонент текста (для правильной кодировки)
+        MutableComponent baseComponent;
         if (!plannedActions.isEmpty()) {
             if (currentStepIndex < plannedActions.size()) {
-                // Если шаги еще остались — показываем их
                 String current = plannedActions.get(currentStepIndex);
-                String next = (currentStepIndex + 1 < plannedActions.size())
-                        ? plannedActions.get(currentStepIndex + 1)
-                        : "";
-                base = next.isEmpty()
-                        ? ("Шаг: " + current)
-                        : ("Шаг: " + current + " → " + next);
+                String next = (currentStepIndex + 1 < plannedActions.size()) ? plannedActions.get(currentStepIndex + 1) : null;
+                if (next == null) {
+                    baseComponent = Component.translatable("tfcanvilhelper.step.single", current);
+                } else {
+                    baseComponent = Component.translatable("tfcanvilhelper.step.next", current, next);
+                }
             } else {
-                // Если индекс дошел до конца списка — значит всё выполнено
-                base = "Готово!";
+                baseComponent = Component.translatable("tfcanvilhelper.ready");
             }
         } else {
-            // Если плана вообще нет (например, еще не нажимали Рассчитать)
-            base = resultText != null ? resultText : "";
+            baseComponent = Component.literal(resultText != null ? resultText : "");
         }
 
-        String display = ellipsizeToWidth(base, maxTextW);
+        // 2. Рассчитываем размеры
+        int maxToastW = Math.max(60, screenW - TOAST_MAX_WIDTH_MARGIN * 2);
+        int maxTextW = maxToastW - (TOAST_PADDING_X * 2) - (TOAST_CLOSE_GAP + TOAST_CLOSE_W);
 
+        String display = ellipsizeToWidth(baseComponent.getString(), maxTextW);
+        int textW = mc.font.width(display);
 
-// дальше идёт твой существующий код:
-        int textW = Minecraft.getInstance().font.width(display);
         int boxW = textW + TOAST_PADDING_X * 2 + TOAST_CLOSE_GAP + TOAST_CLOSE_W;
         boxW = Math.min(boxW, maxToastW);
-
-        int boxH = Minecraft.getInstance().font.lineHeight + TOAST_PADDING_Y * 2;
+        int boxH = mc.font.lineHeight + TOAST_PADDING_Y * 2;
 
         int x0 = (screenW - boxW) / 2;
         int y0 = screenH - boxH - TOAST_BOTTOM_MARGIN;
@@ -273,32 +266,32 @@ public class AnvilOverlayHandler {
         tr.x0 = x0; tr.y0 = y0; tr.w = boxW; tr.h = boxH;
         tr.displayText = display;
 
-
         int cx0 = x0 + boxW - TOAST_PADDING_X - TOAST_CLOSE_W;
         int cy0 = y0 + (boxH - TOAST_CLOSE_H) / 2;
         tr.closeX0 = cx0; tr.closeY0 = cy0;
         tr.closeX1 = cx0 + TOAST_CLOSE_W; tr.closeY1 = cy0 + TOAST_CLOSE_H;
 
         return tr;
-
     }
 
     private static void drawResultToast(GuiGraphics g) {
         ToastRect tr = computeToast();
         if (tr == null) return;
 
-        // opaque background + border
+        // Рисуем фон
         g.fill(tr.x0, tr.y0, tr.x0 + tr.w, tr.y0 + tr.h, 0xFF111111);
-        g.fill(tr.x0, tr.y0, tr.x0 + tr.w, tr.y0 + 1, 0xFF444444);
-        g.fill(tr.x0, tr.y0 + tr.h - 1, tr.x0 + tr.w, tr.y0 + tr.h, 0xFF444444);
-        g.fill(tr.x0, tr.y0, tr.x0 + 1, tr.y0 + tr.h, 0xFF444444);
-        g.fill(tr.x0 + tr.w - 1, tr.y0, tr.x0 + tr.w, tr.y0 + tr.h, 0xFF444444);
+        g.fill(tr.x0, tr.y0, tr.x0 + tr.w, tr.y0 + 1, 0xFF444444); // Верхняя рамка
+        g.fill(tr.x0, tr.y0 + tr.h - 1, tr.x0 + tr.w, tr.y0 + tr.h, 0xFF444444); // Нижняя
+        g.fill(tr.x0, tr.y0, tr.x0 + 1, tr.y0 + tr.h, 0xFF444444); // Левая
+        g.fill(tr.x0 + tr.w - 1, tr.y0, tr.x0 + tr.w, tr.y0 + tr.h, 0xFF444444); // Правая
 
         Minecraft mc = Minecraft.getInstance();
-        System.out.println("[TfcAnvilHelper] toast display='" + tr.displayText + "'");
-        g.drawString(mc.font, tr.displayText, tr.x0 + TOAST_PADDING_X, tr.y0 + TOAST_PADDING_Y, 0xFFFFFF);
+        // ВАЖНО: Мы удалили System.out.println отсюда!
 
-        // close button (X)
+        // Рисуем текст (используем Component напрямую для надежности)
+        g.drawString(mc.font, tr.displayText, tr.x0 + TOAST_PADDING_X, tr.y0 + TOAST_PADDING_Y, 0xFFFFFF, false);
+
+        // Кнопка закрытия
         g.fill(tr.closeX0, tr.closeY0, tr.closeX1, tr.closeY1, 0xFF333333);
         g.drawCenteredString(mc.font, "X", (tr.closeX0 + tr.closeX1) / 2, tr.closeY0 + 2, 0xFFFFFF);
     }

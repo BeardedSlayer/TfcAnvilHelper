@@ -1,0 +1,5 @@
+{
+  "tfcanvilhelper.step.single": "Шаг: %s",
+  "tfcanvilhelper.step.next": "Шаг: %s → %s",
+  "tfcanvilhelper.ready": "Готово!"
+}
