@@ -3,8 +3,6 @@
   <component name="ProjectModuleManager">
     <modules>
       <module fileurl="file://$PROJECT_DIR$/.idea/TfcAnvilHelper.iml" filepath="$PROJECT_DIR$/.idea/TfcAnvilHelper.iml" />
-      <module fileurl="file://$PROJECT_DIR$/.idea/modules/forge-1.20.1-47.4.11-mdk.main.iml" filepath="$PROJECT_DIR$/.idea/modules/forge-1.20.1-47.4.11-mdk.main.iml" />
-      <module fileurl="file://$PROJECT_DIR$/.idea/modules/forge-1.20.1-47.4.11-mdk.test.iml" filepath="$PROJECT_DIR$/.idea/modules/forge-1.20.1-47.4.11-mdk.test.iml" />
     </modules>
   </component>
 </project>

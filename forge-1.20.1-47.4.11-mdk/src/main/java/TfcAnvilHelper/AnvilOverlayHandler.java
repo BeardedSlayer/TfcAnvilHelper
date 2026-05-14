@@ -50,7 +50,7 @@ public class AnvilOverlayHandler {
     private static String selectedAction3 = "";
     private static int activeMenu = -1; // -1 none, 0..2
     private static String resultText = ""; // показываем в отдельной плашке снизу
-    private static final String[] ACTIONS_LIST = {"0", "+2", "+7", "+13", "+16", "-3", "-6", "-9", "-15"};
+    private static final String[] ACTIONS_LIST = {"-", "0", "+2", "+7", "+13", "+16", "-3", "-6", "-9", "-15"};
     private static int activeInputField = -1; // -1 none, 0 target input
 
     private static long lastCharTime = 0L;
@@ -221,56 +221,41 @@ public class AnvilOverlayHandler {
 
 
     private static ToastRect computeToast() {
-        // Тост существует, если есть или текст, или план
-        if ((resultText == null || resultText.isEmpty()) && plannedActions.isEmpty()) {
-            return null;
-        }
+        if ((resultText == null || resultText.isEmpty()) && plannedActions.isEmpty()) return null;
 
         Minecraft mc = Minecraft.getInstance();
         int screenW = mc.getWindow().getGuiScaledWidth();
         int screenH = mc.getWindow().getGuiScaledHeight();
 
-        // 1. Формируем компонент текста (для правильной кодировки)
-        MutableComponent baseComponent;
+        String display;
         if (!plannedActions.isEmpty()) {
             if (currentStepIndex < plannedActions.size()) {
                 String current = plannedActions.get(currentStepIndex);
-                String next = (currentStepIndex + 1 < plannedActions.size()) ? plannedActions.get(currentStepIndex + 1) : null;
-                if (next == null) {
-                    baseComponent = Component.translatable("tfcanvilhelper.step.single", current);
+                if (currentStepIndex + 1 < plannedActions.size()) {
+                    display = "Тек: " + current + " (Далее: " + plannedActions.get(currentStepIndex + 1) + ")";
                 } else {
-                    baseComponent = Component.translatable("tfcanvilhelper.step.next", current, next);
+                    display = "Последний шаг: " + current;
                 }
             } else {
-                baseComponent = Component.translatable("tfcanvilhelper.ready");
+                display = "Готово! Нажми X для сброса";
             }
         } else {
-            baseComponent = Component.literal(resultText != null ? resultText : "");
+            display = (resultText != null) ? resultText : "";
         }
 
-        // 2. Рассчитываем размеры
-        int maxToastW = Math.max(60, screenW - TOAST_MAX_WIDTH_MARGIN * 2);
-        int maxTextW = maxToastW - (TOAST_PADDING_X * 2) - (TOAST_CLOSE_GAP + TOAST_CLOSE_W);
-
-        String display = ellipsizeToWidth(baseComponent.getString(), maxTextW);
         int textW = mc.font.width(display);
-
-        int boxW = textW + TOAST_PADDING_X * 2 + TOAST_CLOSE_GAP + TOAST_CLOSE_W;
-        boxW = Math.min(boxW, maxToastW);
-        int boxH = mc.font.lineHeight + TOAST_PADDING_Y * 2;
-
+        int boxW = textW + 40;
+        int boxH = 21;
         int x0 = (screenW - boxW) / 2;
-        int y0 = screenH - boxH - TOAST_BOTTOM_MARGIN;
+        int y0 = screenH - boxH - 40;
 
         ToastRect tr = new ToastRect();
         tr.x0 = x0; tr.y0 = y0; tr.w = boxW; tr.h = boxH;
         tr.displayText = display;
-
-        int cx0 = x0 + boxW - TOAST_PADDING_X - TOAST_CLOSE_W;
-        int cy0 = y0 + (boxH - TOAST_CLOSE_H) / 2;
-        tr.closeX0 = cx0; tr.closeY0 = cy0;
-        tr.closeX1 = cx0 + TOAST_CLOSE_W; tr.closeY1 = cy0 + TOAST_CLOSE_H;
-
+        tr.closeX0 = x0 + boxW - 20;
+        tr.closeY0 = y0 + 4;
+        tr.closeX1 = tr.closeX0 + 12;
+        tr.closeY1 = tr.closeY0 + 12;
         return tr;
     }
 
@@ -470,13 +455,26 @@ public class AnvilOverlayHandler {
         Screen screen = event.getScreen();
         if (!(screen instanceof AbstractContainerScreen<?>)) return;
 
+        int mx = (int) Math.round(event.getMouseX());
+        int my = (int) Math.round(event.getMouseY());
+
+        ToastRect trForSkip = computeToast();
+        if (trForSkip != null) {
+            int skipX = trForSkip.closeX0 - 18;
+            if (mx >= skipX && mx < skipX + 12 && my >= trForSkip.closeY0 && my < trForSkip.closeY1) {
+                if (!plannedActions.isEmpty() && currentStepIndex < plannedActions.size()) {
+                    currentStepIndex++;
+                }
+                event.setCanceled(true);
+                return;
+            }
+        }
+
         String cls = screen.getClass().getName();
         if (!cls.contains("AnvilScreen") && !cls.contains("InventoryScreen")) return;
 
         if (event.getButton() != 0) return;
 
-        int mx = (int) Math.round(event.getMouseX());
-        int my = (int) Math.round(event.getMouseY());
 
         // click close on toast
         if (isClickOnToastClose(mx, my)) {
@@ -634,13 +632,17 @@ public class AnvilOverlayHandler {
                 int idx = (my - menuY) / l.itemH;
                 if (idx >= 0 && idx < ACTIONS_LIST.length) {
                     String sel = ACTIONS_LIST[idx];
-                    if (activeMenu == 0) selectedAction1 = sel;
-                    else if (activeMenu == 1) selectedAction2 = sel;
-                    else selectedAction3 = sel;
+                    if (sel.equals("-")) sel = "";
+
+                    if (activeMenu == 0) {
+                        selectedAction1 = sel;
+                    } else if (activeMenu == 1) {
+                        selectedAction2 = sel;
+                    } else {
+                        selectedAction3 = sel;
+
+                    }
                 }
-                activeMenu = -1;
-                event.setCanceled(true);
-                return;
             }
             activeMenu = -1;
         }
