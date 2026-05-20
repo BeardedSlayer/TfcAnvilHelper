@@ -9,9 +9,6 @@ import net.minecraftforge.client.event.ScreenEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import org.lwjgl.glfw.GLFW;
-import net.minecraft.network.chat.Component;
-import net.minecraft.network.chat.MutableComponent;
-
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
@@ -21,9 +18,12 @@ import java.util.*;
 
 @Mod.EventBusSubscriber(modid = "tfcanvilhelper", bus = Mod.EventBusSubscriber.Bus.FORGE, value = Dist.CLIENT)
 public class AnvilOverlayHandler {
-    private static long lastStepTime = 0; // Время последнего успешного нажатия
-    private static final int ANIM_DURATION = 350; // Длительность анимации в мс
-    private static final int STEP_GAP = 10; // Расстояние между числами в списке
+
+    // ==========================================
+    // НАСТРОЙКИ И ТЕХНИЧЕСКИЕ ПЕРЕМЕННЫЕ
+    // ==========================================
+    private static final int ANIM_DURATION = 350;
+    private static final int STEP_GAP = 10;
 
     private static boolean overlayOpen = false;
     private static int buttonX = Integer.MIN_VALUE;
@@ -38,67 +38,76 @@ public class AnvilOverlayHandler {
     private static boolean positionsInitialized = false;
     private static final String PROP_FILE = "tfcanvilhelper_gui.properties";
 
-    private static int dragTarget = 0; // 0 none, 1 main button, 2 calc window
+    // Логика перетаскивания (Drag & Drop)
+    private static int dragTarget = 0;
     private static boolean isDragging = false;
     private static int dragStartX = 0, dragStartY = 0;
     private static int dragOffsetX = 0, dragOffsetY = 0;
     private static final int DRAG_THRESHOLD = 4;
 
+    // Состояния полей ввода
     private static String targetNumber = "";
     private static String selectedAction1 = "";
     private static String selectedAction2 = "";
     private static String selectedAction3 = "";
-    private static int activeMenu = -1; // -1 none, 0..2
-    private static String resultText = ""; // показываем в отдельной плашке снизу
-    private static final String[] ACTIONS_LIST = {"-", "0", "+2", "+7", "+13", "+16", "-3", "-6", "-9", "-15"};
-    private static int activeInputField = -1; // -1 none, 0 target input
+    private static int activeMenu = -1;
+    private static String resultText = "";
+    private static final String[] ACTIONS_LIST = {"-", "+2", "+7", "+13", "+16", "-3", "-6", "-9", "-15"};
+    private static int activeInputField = -1;
 
     private static long lastCharTime = 0L;
 
-    // ===== Result toast UI constants =====
+    // Переменные для быстрой анимации смены текста (200 миллисекунд)
+    private static long stepTransitionStart = 0L;
+    private static String oldToastDisplay = "";
+    private static final int TOAST_ANIM_MS = 200;
+
+    // Настройки отступов плашки подсказок
     private static final int TOAST_PADDING_X = 8;
     private static final int TOAST_PADDING_Y = 6;
     private static final int TOAST_BOTTOM_MARGIN = 40;
-
     private static final int TOAST_CLOSE_W = 12;
     private static final int TOAST_CLOSE_H = 12;
     private static final int TOAST_CLOSE_GAP = 6;
+    private static final int TOAST_MAX_WIDTH_MARGIN = 20;
 
-    private static final int TOAST_MAX_WIDTH_MARGIN = 20; // max toast width = screenW - margin*2
+    // ==========================================
+    // ПРЕМИАЛЬНАЯ ЦВЕТОВАЯ ПАЛИТРА
+    // ==========================================
+    private static final int COLOR_BG_MAIN = 0xD5141416;
+    private static final int COLOR_BG_WIDGET = 0xFF222224;
+    private static final int COLOR_BG_WIDGET_HOVER = 0xFF323236;
+    private static final int COLOR_BORDER = 0xFF444448;
+    private static final int COLOR_BORDER_HIGH = 0xFF63636B;
+
+    private static final int COLOR_BTN_GREEN = 0xFF2E6F40;
+    private static final int COLOR_BTN_GREEN_HOVER = 0xFF3B8B50;
+    private static final int COLOR_BTN_GREEN_BORDER = 0xFF1B4D2A;
 
     private static class Layout {
         int inputX, inputY, inputW, inputH;
         int bsX, bsY, bsW, bsH;
-
         int btnY, btnW, btnH;
         int[] btnX;
-
         int calcBtnX, calcBtnY, calcBtnW, calcBtnH;
-
         int menuW, itemH;
     }
 
     private static Layout layout() {
         Layout l = new Layout();
-
         l.inputX = calcX + 5; l.inputY = calcY + 18; l.inputW = 64; l.inputH = 14;
         l.bsX = l.inputX + l.inputW + 4; l.bsY = l.inputY; l.bsW = 12; l.bsH = l.inputH;
-
         l.btnY = calcY + 50;
         l.btnW = 44; l.btnH = 14;
         int gap = 4;
         int startX = calcX + 5;
         l.btnX = new int[]{ startX, startX + l.btnW + gap, startX + (l.btnW + gap) * 2 };
-
         l.calcBtnX = calcX + 18;
         l.calcBtnW = CALC_WIDTH - 36;
         l.calcBtnH = 14;
         l.calcBtnY = calcY + CALC_HEIGHT - (l.calcBtnH + 6);
-
-        // opaque dropdown
-        l.menuW = 80;
+        l.menuW = 44;
         l.itemH = 14;
-
         return l;
     }
 
@@ -150,55 +159,38 @@ public class AnvilOverlayHandler {
         calcY = Math.min(Math.max(calcY, 0), screenHeight - CALC_HEIGHT);
     }
 
-    // ===== Result toast helpers =====
     private static class ToastRect {
         int x0, y0, w, h;
         int closeX0, closeY0, closeX1, closeY1;
         String displayText;
     }
 
-    private static String ellipsizeToWidth(String s, int maxWidthPx) {
-        if (s == null) return "";
-        Minecraft mc = Minecraft.getInstance();
-        if (mc.font.width(s) <= maxWidthPx) return s;
-
-        String dots = "...";
-        int dotsW = mc.font.width(dots);
-        if (dotsW >= maxWidthPx) return dots;
-
-        int lo = 0, hi = s.length();
-        while (lo < hi) {
-            int mid = (lo + hi + 1) / 2;
-            String cand = s.substring(0, mid) + dots;
-            if (mc.font.width(cand) <= maxWidthPx) lo = mid;
-            else hi = mid - 1;
+    // ==========================================
+    // КООРДИНАТНАЯ КАРТА КНОПОК НАКОВАЛЬНИ TFC
+    // ==========================================
+    // Возвращает [относительный X, относительный Y, Ширина, Высота] кнопки молотка внутри текстуры TFC
+    private static int[] getActionRect(String action) {
+        switch (action) {
+            case "-3":  return new int[]{53, 50, 16, 16};
+            case "-6":  return new int[]{71, 50, 16, 16};
+            case "+2":  return new int[]{89, 50, 16, 16};
+            case "+7":  return new int[]{107, 50, 16, 16};
+            case "-9":  return new int[]{53, 68, 16, 16};
+            case "-15": return new int[]{71, 68, 16, 16};
+            case "+13": return new int[]{89, 68, 16, 16};
+            case "+16": return new int[]{107, 68, 16, 16};
+            default:    return null;
         }
-        return s.substring(0, lo) + dots;
     }
 
-    private static boolean isClickOnAnyTfcStepButton(int mx, int my, AbstractContainerScreen<?> screen) {
-        int guiLeft = screen.getGuiLeft();
-        int guiTop = screen.getGuiTop();
-
-        // Относительные координаты клика внутри GUI (от 0 до ширины/высоты окна)
-        int relX = mx - guiLeft;
-        int relY = my - guiTop;
-
-        // Выводим в консоль, чтобы ты мог увидеть координаты "нерабочих" кнопок
-        // System.out.println("[TfcAnvilHelper] Click at relX=" + relX + ", relY=" + relY);
-
-        // Расширенная зона (от 5 до 175 по X, от 40 до 120 по Y)
-        // ТФК кнопки обычно находятся в этом районе.
-        boolean hit = relX >= 5 && relX < 175 && relY >= 40 && relY < 120;
-
-        return hit;
-    }
-
-    private static String getActionAt(int mx, int my, AbstractContainerScreen<?> screen) {
+    // ==========================================
+    // МЕТОД ОПРЕДЕЛЕНИЯ КЛИКА ПО КНОПКАМ TFC
+    // ==========================================
+    private static String getActionAt(int mx, int my, AbstractContainerScreen screen) {
         int relX = mx - screen.getGuiLeft();
         int relY = my - screen.getGuiTop();
 
-        // ВЕРХНИЙ РЯД (Y от 50 до 66)
+        // Проверяем верхний ряд кнопок молотков
         if (relY >= 50 && relY <= 66) {
             if (relX >= 53 && relX <= 69) return "-3";
             if (relX >= 71 && relX <= 87) return "-6";
@@ -206,7 +198,7 @@ public class AnvilOverlayHandler {
             if (relX >= 107 && relX <= 123) return "+7";
         }
 
-        // НИЖНИЙ РЯД (Y от 68 до 84)
+        // Проверяем нижний ряд кнопок молотков
         if (relY >= 68 && relY <= 84) {
             if (relX >= 53 && relX <= 69) return "-9";
             if (relX >= 71 && relX <= 87) return "-15";
@@ -214,11 +206,70 @@ public class AnvilOverlayHandler {
             if (relX >= 107 && relX <= 123) return "+16";
         }
 
-        return null;
+        return null; // Если кликнули мимо кнопок TFC
     }
 
+    // ==========================================
+    // РЕНДЕР АНИМИРОВАННОЙ РАМКИ-ЗЕБРЫ
+    // ==========================================
+    private static void drawZebraBorder(GuiGraphics g, int x, int y, int w, int h) {
+        // Скорость движения полосок
+        long time = System.currentTimeMillis() / 60;
+        int period = 6; // Ширина шага зебры (3px белых, 3px черных)
 
+        // Верхняя грань (рисуем на 1px выше кнопки)
+        for (int i = -1; i <= w; i++) {
+            int index = i + (int) time;
+            int color = (Math.floorMod(index, period) < 3) ? 0xFFFFFFFF : 0xFF000000;
+            g.fill(x + i, y - 1, x + i + 1, y, color);
+        }
 
+        // Нижня грань (рисуем на 1px ниже кнопки)
+        for (int i = -1; i <= w; i++) {
+            int index = (w - i) + (int) time;
+            int color = (Math.floorMod(index, period) < 3) ? 0xFFFFFFFF : 0xFF000000;
+            g.fill(x + i, y + h, x + i + 1, y + h + 1, color);
+        }
+
+        // Левая грань (рисуем на 1px левее кнопки)
+        for (int j = 0; j < h; j++) {
+            int index = (h - j) + (int) time;
+            int color = (Math.floorMod(index, period) < 3) ? 0xFFFFFFFF : 0xFF000000;
+            g.fill(x - 1, y + j, x, y + j + 1, color);
+        }
+
+        // Правая грань (рисуем на 1px правее кнопки)
+        for (int j = 0; j < h; j++) {
+            int index = j + (int) time;
+            int color = (Math.floorMod(index, period) < 3) ? 0xFFFFFFFF : 0xFF000000;
+            g.fill(x + w, y + j, x + w + 1, y + j + 1, color);
+        }
+    }
+
+    // Сборка строки текстового уведомления
+    private static String getToastDisplayStr(int stepIdx) {
+        if (!plannedActions.isEmpty()) {
+            if (stepIdx < plannedActions.size()) {
+                String current = plannedActions.get(stepIdx);
+                if (stepIdx + 1 < plannedActions.size()) {
+                    return "Тек: " + current + " (Далее: " + plannedActions.get(stepIdx + 1) + ")";
+                } else {
+                    return "Последний шаг: " + current;
+                }
+            } else {
+                return "Готово! Нажми X для сброса";
+            }
+        }
+        return (resultText != null) ? resultText : "";
+    }
+
+    // Триггер запуска анимации переключения шагов текста
+    private static void triggerStepAdvance() {
+        if (plannedActions.isEmpty()) return;
+        oldToastDisplay = getToastDisplayStr(currentStepIndex);
+        currentStepIndex++;
+        stepTransitionStart = System.currentTimeMillis();
+    }
 
     private static ToastRect computeToast() {
         if ((resultText == null || resultText.isEmpty()) && plannedActions.isEmpty()) return null;
@@ -227,23 +278,16 @@ public class AnvilOverlayHandler {
         int screenW = mc.getWindow().getGuiScaledWidth();
         int screenH = mc.getWindow().getGuiScaledHeight();
 
-        String display;
-        if (!plannedActions.isEmpty()) {
-            if (currentStepIndex < plannedActions.size()) {
-                String current = plannedActions.get(currentStepIndex);
-                if (currentStepIndex + 1 < plannedActions.size()) {
-                    display = "Тек: " + current + " (Далее: " + plannedActions.get(currentStepIndex + 1) + ")";
-                } else {
-                    display = "Последний шаг: " + current;
-                }
-            } else {
-                display = "Готово! Нажми X для сброса";
-            }
-        } else {
-            display = (resultText != null) ? resultText : "";
+        String display = getToastDisplayStr(currentStepIndex);
+        int textW = mc.font.width(display);
+
+        // Чтобы рамка не дергалась во время сдвига, сохраняем максимальную ширину между старым и новым текстом
+        long elapsed = System.currentTimeMillis() - stepTransitionStart;
+        if (elapsed < TOAST_ANIM_MS && !oldToastDisplay.isEmpty()) {
+            int oldW = mc.font.width(oldToastDisplay);
+            textW = Math.max(textW, oldW);
         }
 
-        int textW = mc.font.width(display);
         int boxW = textW + 40;
         int boxH = 21;
         int x0 = (screenW - boxW) / 2;
@@ -263,21 +307,41 @@ public class AnvilOverlayHandler {
         ToastRect tr = computeToast();
         if (tr == null) return;
 
-        // Рисуем фон
-        g.fill(tr.x0, tr.y0, tr.x0 + tr.w, tr.y0 + tr.h, 0xFF111111);
-        g.fill(tr.x0, tr.y0, tr.x0 + tr.w, tr.y0 + 1, 0xFF444444); // Верхняя рамка
-        g.fill(tr.x0, tr.y0 + tr.h - 1, tr.x0 + tr.w, tr.y0 + tr.h, 0xFF444444); // Нижняя
-        g.fill(tr.x0, tr.y0, tr.x0 + 1, tr.y0 + tr.h, 0xFF444444); // Левая
-        g.fill(tr.x0 + tr.w - 1, tr.y0, tr.x0 + tr.w, tr.y0 + tr.h, 0xFF444444); // Правая
+        g.fill(tr.x0, tr.y0, tr.x0 + tr.w, tr.y0 + tr.h, COLOR_BG_MAIN);
+        g.fill(tr.x0, tr.y0, tr.x0 + tr.w, tr.y0 + 1, COLOR_BORDER);
+        g.fill(tr.x0, tr.y0 + tr.h - 1, tr.x0 + tr.w, tr.y0 + tr.h, COLOR_BORDER);
+        g.fill(tr.x0, tr.y0, tr.x0 + 1, tr.y0 + tr.h, COLOR_BORDER);
+        g.fill(tr.x0 + tr.w - 1, tr.y0, tr.x0 + tr.w, tr.y0 + tr.h, COLOR_BORDER);
 
         Minecraft mc = Minecraft.getInstance();
-        // ВАЖНО: Мы удалили System.out.println отсюда!
+        long elapsed = System.currentTimeMillis() - stepTransitionStart;
 
-        // Рисуем текст (используем Component напрямую для надежности)
-        g.drawString(mc.font, tr.displayText, tr.x0 + TOAST_PADDING_X, tr.y0 + TOAST_PADDING_Y, 0xFFFFFF, false);
+        if (elapsed < TOAST_ANIM_MS && !oldToastDisplay.isEmpty()) {
+            float progress = (float) elapsed / TOAST_ANIM_MS;
+            float easeOut = 1.0f - (float) Math.pow(1.0f - progress, 3); // Быстрый сдвиг Cubic Ease-Out
 
-        // Кнопка закрытия
-        g.fill(tr.closeX0, tr.closeY0, tr.closeX1, tr.closeY1, 0xFF333333);
+            // Рендер улетающего старого текста
+            int oldAlpha = (int) ((1.0f - progress) * 255);
+            int oldColor = (oldAlpha << 24) | 0xFFFFFF;
+            int oldOffsetX = (int) (-easeOut * 25);
+            g.pose().pushPose();
+            g.pose().translate(oldOffsetX, 0, 0);
+            g.drawString(mc.font, oldToastDisplay, tr.x0 + TOAST_PADDING_X, tr.y0 + TOAST_PADDING_Y, oldColor, false);
+            g.pose().popPose();
+
+            // Рендер налетающего нового текста
+            int newAlpha = (int) (progress * 255);
+            int newColor = (newAlpha << 24) | 0xFFFFFF;
+            int newOffsetX = (int) ((1.0f - easeOut) * 25);
+            g.pose().pushPose();
+            g.pose().translate(newOffsetX, 0, 0);
+            g.drawString(mc.font, tr.displayText, tr.x0 + TOAST_PADDING_X, tr.y0 + TOAST_PADDING_Y, newColor, false);
+            g.pose().popPose();
+        } else {
+            g.drawString(mc.font, tr.displayText, tr.x0 + TOAST_PADDING_X, tr.y0 + TOAST_PADDING_Y, 0xFFFFFF, false);
+        }
+
+        g.fill(tr.closeX0, tr.closeY0, tr.closeX1, tr.closeY1, COLOR_BG_WIDGET);
         g.drawCenteredString(mc.font, "X", (tr.closeX0 + tr.closeX1) / 2, tr.closeY0 + 2, 0xFFFFFF);
     }
 
@@ -293,10 +357,13 @@ public class AnvilOverlayHandler {
         return mx >= tr.x0 && mx < tr.x0 + tr.w && my >= tr.y0 && my < tr.y0 + tr.h;
     }
 
+    // ==========================================
+    // СЕРДЦЕ РЕНДЕРА ИНТЕРФЕЙСА МОДА
+    // ==========================================
     @SubscribeEvent
     public static void onScreenRender(ScreenEvent.Render.Post event) {
         Screen screen = event.getScreen();
-        if (!(screen instanceof AbstractContainerScreen<?>)) return;
+        if (!(screen instanceof AbstractContainerScreen<?> containerScreen)) return;
 
         String cls = screen.getClass().getName();
         if (!cls.contains("AnvilScreen") && !cls.contains("InventoryScreen")) return;
@@ -310,40 +377,32 @@ public class AnvilOverlayHandler {
             loadPositions();
         }
 
-        // drag handling
+        int mx = (int) Math.round(event.getMouseX());
+        int my = (int) Math.round(event.getMouseY());
+
+        // Логика перетаскивания элементов мышкой
         if (dragTarget > 0) {
             Minecraft mc = Minecraft.getInstance();
             long win = mc.getWindow().getWindow();
             double guiScale = mc.getWindow().getGuiScale();
-            double mx = mc.mouseHandler.xpos() / guiScale;
-            double my = mc.mouseHandler.ypos() / guiScale;
-            int imx = (int) Math.round(mx), imy = (int) Math.round(my);
+            int imx = (int) Math.round(mc.mouseHandler.xpos() / guiScale);
+            int imy = (int) Math.round(mc.mouseHandler.ypos() / guiScale);
 
             if (GLFW.glfwGetMouseButton(win, GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_RELEASE) {
                 if (isDragging) savePositions();
-                dragTarget = 0;
-                isDragging = false;
+                dragTarget = 0; isDragging = false;
             } else {
-                if (!isDragging) {
-                    if (Math.abs(imx - dragStartX) > DRAG_THRESHOLD || Math.abs(imy - dragStartY) > DRAG_THRESHOLD) {
-                        isDragging = true;
-                    }
+                if (!isDragging && (Math.abs(imx - dragStartX) > DRAG_THRESHOLD || Math.abs(imy - dragStartY) > DRAG_THRESHOLD)) {
+                    isDragging = true;
                 }
                 if (isDragging) {
-                    if (dragTarget == 1) {
-                        buttonX = imx - dragOffsetX;
-                        buttonY = imy - dragOffsetY;
-                        clampButtonPosition();
-                    } else if (dragTarget == 2) {
-                        calcX = imx - dragOffsetX;
-                        calcY = imy - dragOffsetY;
-                        clampCalcPosition();
-                    }
+                    if (dragTarget == 1) { buttonX = imx - dragOffsetX; buttonY = imy - dragOffsetY; clampButtonPosition(); }
+                    else if (dragTarget == 2) { calcX = imx - dragOffsetX; calcY = imy - dragOffsetY; clampCalcPosition(); }
                 }
             }
         }
 
-        // keyboard polling fallback
+        // Поллинг клавиатуры
         if (overlayOpen && activeInputField == 0) {
             try {
                 Minecraft mc = Minecraft.getInstance();
@@ -351,34 +410,17 @@ public class AnvilOverlayHandler {
                 long now = System.currentTimeMillis();
                 if (now - lastCharTime > 80) {
                     for (int i = 0; i <= 9; i++) {
-                        int key = GLFW.GLFW_KEY_0 + i;
-                        if (GLFW.glfwGetKey(win, key) == GLFW.GLFW_PRESS) {
-                            targetNumber = targetNumber + (char) ('0' + i);
-                            lastCharTime = now;
-                            break;
+                        if (GLFW.glfwGetKey(win, GLFW.GLFW_KEY_0 + i) == GLFW.GLFW_PRESS || GLFW.glfwGetKey(win, GLFW.GLFW_KEY_KP_0 + i) == GLFW.GLFW_PRESS) {
+                            targetNumber += (char) ('0' + i); lastCharTime = now; break;
                         }
                     }
-                    for (int i = 0; i <= 9; i++) {
-                        int key = GLFW.GLFW_KEY_KP_0 + i;
-                        if (GLFW.glfwGetKey(win, key) == GLFW.GLFW_PRESS) {
-                            targetNumber = targetNumber + (char) ('0' + i);
-                            lastCharTime = now;
-                            break;
-                        }
+                    if (GLFW.glfwGetKey(win, GLFW.GLFW_KEY_BACKSPACE) == GLFW.GLFW_PRESS && !targetNumber.isEmpty()) {
+                        targetNumber = targetNumber.substring(0, targetNumber.length() - 1); lastCharTime = now;
                     }
-                    if (GLFW.glfwGetKey(win, GLFW.GLFW_KEY_BACKSPACE) == GLFW.GLFW_PRESS) {
-                        if (!targetNumber.isEmpty()) targetNumber = targetNumber.substring(0, targetNumber.length() - 1);
-                        lastCharTime = now;
+                    if (GLFW.glfwGetKey(win, GLFW.GLFW_KEY_ENTER) == GLFW.GLFW_PRESS || GLFW.glfwGetKey(win, GLFW.GLFW_KEY_KP_ENTER) == GLFW.GLFW_PRESS) {
+                        performCalculation(); lastCharTime = now;
                     }
-                    if (GLFW.glfwGetKey(win, GLFW.GLFW_KEY_ENTER) == GLFW.GLFW_PRESS ||
-                            GLFW.glfwGetKey(win, GLFW.GLFW_KEY_KP_ENTER) == GLFW.GLFW_PRESS) {
-                        performCalculation();
-                        lastCharTime = now;
-                    }
-                    if (GLFW.glfwGetKey(win, GLFW.GLFW_KEY_ESCAPE) == GLFW.GLFW_PRESS) {
-                        overlayOpen = false;
-                        lastCharTime = now;
-                    }
+                    if (GLFW.glfwGetKey(win, GLFW.GLFW_KEY_ESCAPE) == GLFW.GLFW_PRESS) { overlayOpen = false; lastCharTime = now; }
                 }
             } catch (Throwable ignored) {}
         }
@@ -386,70 +428,132 @@ public class AnvilOverlayHandler {
         Layout l = layout();
         GuiGraphics g = event.getGuiGraphics();
 
-        // main toggle button
-        int buttonColor = overlayOpen ? 0xFF00FF00 : 0xFF666666;
-        g.fill(buttonX, buttonY, buttonX + BUTTON_W, buttonY + BUTTON_H, buttonColor);
+        // ------------------------------------------
+        // ДИНАМИЧЕСКИЙ ПОДДСВЕТ КНОПКИ МОЛОТКА НА НАКОВАЛЬНЕ TFC
+        // ------------------------------------------
+        if (cls.contains("AnvilScreen") && !plannedActions.isEmpty() && currentStepIndex < plannedActions.size()) {
+            String expectedAction = plannedActions.get(currentStepIndex);
+            int[] rect = getActionRect(expectedAction);
+            if (rect != null) {
+                // Переводим относительные координаты текстуры TFC в абсолютные оконные координаты игры
+                int absX = containerScreen.getGuiLeft() + rect[0];
+                int absY = containerScreen.getGuiTop() + rect[1];
+                drawZebraBorder(g, absX, absY, rect[2], rect[3]);
+            }
+        }
+
+        // Отрисовка маленькой круглой кнопки оверлея
+        boolean mainBtnHovered = mx >= buttonX && mx < buttonX + BUTTON_W && my >= buttonY && my < buttonY + BUTTON_H;
+        int mainBtnBg = overlayOpen ? COLOR_BTN_GREEN : (mainBtnHovered ? COLOR_BG_WIDGET_HOVER : COLOR_BG_WIDGET);
+        int mainBtnBrd = overlayOpen ? COLOR_BTN_GREEN_BORDER : COLOR_BORDER;
+
+        g.fill(buttonX, buttonY, buttonX + BUTTON_W, buttonY + BUTTON_H, mainBtnBg);
+        g.fill(buttonX, buttonY, buttonX + BUTTON_W, buttonY + 1, mainBtnBrd);
+        g.fill(buttonX, buttonY + BUTTON_H - 1, buttonX + BUTTON_W, buttonY + BUTTON_H, mainBtnBrd);
+        g.fill(buttonX, buttonY, buttonX + 1, buttonY + BUTTON_H, mainBtnBrd);
+        g.fill(buttonX + BUTTON_W - 1, buttonY, buttonX + BUTTON_W, buttonY + BUTTON_H, mainBtnBrd);
         g.drawCenteredString(Minecraft.getInstance().font, "⧉", buttonX + 8, buttonY + 5, 0xFFFFFF);
 
-        // result toast always visible if has text
         drawResultToast(g);
 
         if (!overlayOpen) return;
 
-        // background
-        g.fill(calcX - 5, calcY - 5, calcX + CALC_WIDTH, calcY + CALC_HEIGHT, 0xBB111111);
+        // Фон главного окна калькулятора
+        int winX0 = calcX - 5, winY0 = calcY - 5, winX1 = calcX + CALC_WIDTH, winY1 = calcY + CALC_HEIGHT;
+        g.fill(winX0, winY0, winX1, winY1, COLOR_BG_MAIN);
+        g.fill(winX0, winY0, winX1, winY0 + 1, COLOR_BORDER);
+        g.fill(winX0, winY1 - 1, winX1, winY1, COLOR_BORDER);
+        g.fill(winX0, winY0, winX0 + 1, winY1, COLOR_BORDER);
+        g.fill(winX1 - 1, winY0, winX1, winY1, COLOR_BORDER);
 
-        // input
+        // Поле ввода "Целевое число"
         g.drawString(Minecraft.getInstance().font, "Целевое число:", calcX + 5, calcY + 5, 0xFFFFFF);
-        int inputBg = (activeInputField == 0) ? 0xFF333333 : 0xFF000000;
+        boolean inputHovered = mx >= l.inputX && mx < l.inputX + l.inputW && my >= l.inputY && my < l.inputY + l.inputH;
+        int inputBg = (activeInputField == 0) ? 0xFF141416 : 0xFF1C1C1E;
+        int inputBrd = (activeInputField == 0) ? COLOR_BORDER_HIGH : (inputHovered ? COLOR_BORDER_HIGH : COLOR_BORDER);
+
         g.fill(l.inputX, l.inputY, l.inputX + l.inputW, l.inputY + l.inputH, inputBg);
+        g.fill(l.inputX, l.inputY, l.inputX + l.inputW, l.inputY + 1, inputBrd);
+        g.fill(l.inputX, l.inputY + l.inputH - 1, l.inputX + l.inputW, l.inputY + l.inputH, inputBrd);
+        g.fill(l.inputX, l.inputY, l.inputX + 1, l.inputY + l.inputH, inputBrd);
+        g.fill(l.inputX + l.inputW - 1, l.inputY, l.inputX + l.inputW, l.inputY + l.inputH, inputBrd);
 
         String disp = targetNumber.isEmpty() ? "" : targetNumber;
-        if (activeInputField == 0) disp = disp + "|";
-        g.drawString(Minecraft.getInstance().font, disp, l.inputX + 2, l.inputY + 2, 0xFFFFFF);
+        if (activeInputField == 0) disp += "|";
+        g.drawString(Minecraft.getInstance().font, disp, l.inputX + 4, l.inputY + 3, 0xFFFFFF);
 
-        // backspace
-        g.fill(l.bsX, l.bsY, l.bsX + l.bsW, l.bsY + l.bsH, 0xFF444444);
-        g.drawString(Minecraft.getInstance().font, "←", l.bsX + 2, l.bsY + 2, 0xFFFFFF);
+        // Кнопка Backspace "←"
+        boolean bsHovered = mx >= l.bsX && mx < l.bsX + l.bsW && my >= l.bsY && my < l.bsY + l.bsH;
+        g.fill(l.bsX, l.bsY, l.bsX + l.bsW, l.bsY + l.bsH, bsHovered ? COLOR_BG_WIDGET_HOVER : COLOR_BG_WIDGET);
+        g.fill(l.bsX, l.bsY, l.bsX + l.bsW, l.bsY + 1, COLOR_BORDER);
+        g.fill(l.bsX, l.bsY + l.bsH - 1, l.bsX + l.bsW, l.bsY + l.bsH, COLOR_BORDER);
+        g.fill(l.bsX, l.bsY, l.bsX + 1, l.bsY + l.bsH, COLOR_BORDER);
+        g.fill(l.bsX + l.bsW - 1, l.bsY, l.bsX + l.bsW, l.bsY + l.bsH, COLOR_BORDER);
+        g.drawString(Minecraft.getInstance().font, "←", l.bsX + 2, l.bsY + 3, 0xFFFFFF);
 
-        // actions
+        // 3 Слота закрепленных действий
         g.drawString(Minecraft.getInstance().font, "Действия:", calcX + 5, calcY + 36, 0xFFFFFF);
         for (int i = 0; i < 3; i++) {
             int bx = l.btnX[i];
-            g.fill(bx, l.btnY, bx + l.btnW, l.btnY + l.btnH, 0xFF444444);
-            g.drawString(Minecraft.getInstance().font, (i + 1) + ".", bx + 3, l.btnY + 2, 0xFFFFFF);
+            boolean actHovered = mx >= bx && mx < bx + l.btnW && my >= l.btnY && my < l.btnY + l.btnH;
+            int actBrd = (activeMenu == i) ? COLOR_BORDER_HIGH : COLOR_BORDER;
 
-            String at = (i == 0) ? (selectedAction1.isEmpty() ? "---" : selectedAction1)
-                    : (i == 1) ? (selectedAction2.isEmpty() ? "---" : selectedAction2)
-                    : (selectedAction3.isEmpty() ? "---" : selectedAction3);
-            g.drawString(Minecraft.getInstance().font, at, bx + 16, l.btnY + 2, 0xFFFFFF);
+            g.fill(bx, l.btnY, bx + l.btnW, l.btnY + l.btnH, actHovered ? COLOR_BG_WIDGET_HOVER : COLOR_BG_WIDGET);
+            g.fill(bx, l.btnY, bx + l.btnW, l.btnY + 1, actBrd);
+            g.fill(bx, l.btnY + l.btnH - 1, bx + l.btnW, l.btnY + l.btnH, actBrd);
+            g.fill(bx, l.btnY, bx + 1, l.btnY + l.btnH, actBrd);
+            g.fill(bx + l.btnW - 1, l.btnY, bx + l.btnW, l.btnY + l.btnH, actBrd);
+
+            g.drawString(Minecraft.getInstance().font, (i + 1) + ".", bx + 3, l.btnY + 3, 0x808080);
+
+            String at = (i == 0) ? (selectedAction1.isEmpty() ? "-" : selectedAction1)
+                    : (i == 1) ? (selectedAction2.isEmpty() ? "-" : selectedAction2)
+                      : (selectedAction3.isEmpty() ? "-" : selectedAction3);
+            int textOffset = at.equals("-") ? 20 : 16;
+            g.drawString(Minecraft.getInstance().font, at, bx + textOffset, l.btnY + 3, 0xFFFFFF);
         }
 
-        // calculate button
-        g.fill(l.calcBtnX, l.calcBtnY, l.calcBtnX + l.calcBtnW, l.calcBtnY + l.calcBtnH, 0xFF00AA00);
-        g.drawCenteredString(Minecraft.getInstance().font, "Рассчитать", l.calcBtnX + l.calcBtnW / 2, l.calcBtnY + 2, 0xFFFFFF);
+        // Кнопка "Рассчитать"
+        boolean calcHovered = mx >= l.calcBtnX && mx < l.calcBtnX + l.calcBtnW && my >= l.calcBtnY && my < l.calcBtnY + l.calcBtnH;
+        int calcBg = calcHovered ? COLOR_BTN_GREEN_HOVER : COLOR_BTN_GREEN;
+        g.fill(l.calcBtnX, l.calcBtnY, l.calcBtnX + l.calcBtnW, l.calcBtnY + l.calcBtnH, calcBg);
+        g.fill(l.calcBtnX, l.calcBtnY, l.calcBtnX + l.calcBtnW, l.calcBtnY + 1, COLOR_BTN_GREEN_BORDER);
+        g.fill(l.calcBtnX, l.calcBtnY + l.calcBtnH - 1, l.calcBtnX + l.calcBtnW, l.calcBtnY + l.calcBtnH, COLOR_BTN_GREEN_BORDER);
+        g.fill(l.calcBtnX, l.calcBtnY, l.calcBtnX + 1, l.calcBtnY + l.calcBtnH, COLOR_BTN_GREEN_BORDER);
+        g.fill(l.calcBtnX + l.calcBtnW - 1, l.calcBtnY, l.calcBtnX + l.calcBtnW, l.calcBtnY + l.calcBtnH, COLOR_BTN_GREEN_BORDER);
+        g.drawCenteredString(Minecraft.getInstance().font, "Рассчитать", l.calcBtnX + l.calcBtnW / 2, l.calcBtnY + 3, 0xFFFFFF);
 
-        // dropdown (opaque + border)
+        // Открытый выпадающий список вариантов
         if (activeMenu >= 0 && activeMenu < 3) {
             g.pose().pushPose();
-            g.pose().translate(0, 0, 500); // поднять слой сильно вперёд
+            g.pose().translate(0, 0, 500);
 
             int menuX = l.btnX[activeMenu];
-            int menuY = l.btnY + l.btnH + 4;
+            int menuY = l.btnY + l.btnH + 2;
             int menuH = ACTIONS_LIST.length * l.itemH;
 
-            g.fill(menuX, menuY, menuX + l.menuW, menuY + menuH, 0xFF202020);
-            // рамка...
-            for (int i = 0; i < ACTIONS_LIST.length; i++) {
-                g.drawString(Minecraft.getInstance().font, ACTIONS_LIST[i],
-                        menuX + 4, menuY + 2 + i * l.itemH, 0xFFFFFF);
-            }
+            g.fill(menuX, menuY, menuX + l.menuW, menuY + menuH, 0xFF1C1C1E);
+            g.fill(menuX, menuY, menuX + l.menuW, menuY + 1, COLOR_BORDER);
+            g.fill(menuX, menuY + menuH - 1, menuX + l.menuW, menuY + menuH, COLOR_BORDER);
+            g.fill(menuX, menuY, menuX + 1, menuY + menuH, COLOR_BORDER);
+            g.fill(menuX + l.menuW - 1, menuY, menuX + l.menuW, menuY + menuH, COLOR_BORDER);
 
+            for (int i = 0; i < ACTIONS_LIST.length; i++) {
+                int itemY = menuY + i * l.itemH;
+                boolean itemHovered = mx >= menuX && mx < menuX + l.menuW && my >= itemY && my < itemY + l.itemH;
+                if (itemHovered) g.fill(menuX + 1, itemY, menuX + l.menuW - 1, itemY + l.itemH, COLOR_BG_WIDGET_HOVER);
+
+                String itemText = ACTIONS_LIST[i];
+                int textW = Minecraft.getInstance().font.width(itemText);
+                g.drawString(Minecraft.getInstance().font, itemText, menuX + (l.menuW - textW) / 2, itemY + 3, 0xFFFFFFFF, false);
+            }
             g.pose().popPose();
         }
-
     }
 
+    // ==========================================
+    // КЛИКИ: НАЖАТИЕ МЫШИ
+    // ==========================================
     @SubscribeEvent
     public static void onMouseButtonPressed(ScreenEvent.MouseButtonPressed.Pre event) {
         Screen screen = event.getScreen();
@@ -462,199 +566,146 @@ public class AnvilOverlayHandler {
         if (trForSkip != null) {
             int skipX = trForSkip.closeX0 - 18;
             if (mx >= skipX && mx < skipX + 12 && my >= trForSkip.closeY0 && my < trForSkip.closeY1) {
-                if (!plannedActions.isEmpty() && currentStepIndex < plannedActions.size()) {
-                    currentStepIndex++;
-                }
-                event.setCanceled(true);
-                return;
+                if (!plannedActions.isEmpty() && currentStepIndex < plannedActions.size()) { triggerStepAdvance(); }
+                event.setCanceled(true); return;
             }
         }
 
         String cls = screen.getClass().getName();
         if (!cls.contains("AnvilScreen") && !cls.contains("InventoryScreen")) return;
-
         if (event.getButton() != 0) return;
 
-
-        // click close on toast
         if (isClickOnToastClose(mx, my)) {
-            resultText = "";
-            plannedActions.clear(); // Очищаем план, чтобы плашка исчезла
-            currentStepIndex = 0;
-            event.setCanceled(true);
-            return;
+            resultText = ""; plannedActions.clear(); currentStepIndex = 0; event.setCanceled(true); return;
         }
-
 
         if (isClickOnToast(mx, my) && !isClickOnToastClose(mx, my)) {
-            if (!plannedActions.isEmpty() && currentStepIndex < plannedActions.size()) {
-                currentStepIndex++;
-                System.out.println("[TfcAnvilHelper] toast click, step = " + currentStepIndex);
-            }
-            event.setCanceled(true);
-            return;
+            if (!plannedActions.isEmpty() && currentStepIndex < plannedActions.size()) { triggerStepAdvance(); }
+            event.setCanceled(true); return;
         }
 
-
-        // block clicks under the toast
-        if (isClickOnToast(mx, my)) {
-            event.setCanceled(true);
-            return;
-        }
+        if (isClickOnToast(mx, my)) { event.setCanceled(true); return; }
 
         if (isOnMainButton(mx, my)) {
-            dragTarget = 1;
-            dragStartX = mx; dragStartY = my;
-            dragOffsetX = mx - buttonX; dragOffsetY = my - buttonY;
-            isDragging = false;
-            event.setCanceled(true);
-            return;
+            dragTarget = 1; dragStartX = mx; dragStartY = my; dragOffsetX = mx - buttonX; dragOffsetY = my - buttonY;
+            isDragging = false; event.setCanceled(true); return;
         }
 
         if (!overlayOpen) return;
-
         Layout l = layout();
 
-        // click in dropdown: don't start dragonMouseButtonPressed
         if (activeMenu >= 0 && activeMenu < 3) {
-            int menuX = l.btnX[activeMenu];
-            int menuY = l.btnY + l.btnH + 4;
+            int menuX = l.btnX[activeMenu]; int menuY = l.btnY + l.btnH + 2;
             if (mx >= menuX && mx < menuX + l.menuW && my >= menuY && my < menuY + (ACTIONS_LIST.length * l.itemH)) {
-                event.setCanceled(true);
-                return;
+                event.setCanceled(true); return;
             }
         }
 
-        // input focus
         if (mx >= l.inputX && mx < l.inputX + l.inputW && my >= l.inputY && my < l.inputY + l.inputH) {
-            activeInputField = 0;
-            lastCharTime = 0;
-            event.setCanceled(true);
-            return;
+            activeInputField = 0; lastCharTime = 0; event.setCanceled(true); return;
         }
 
-        // action buttons: no drag on press
         for (int i = 0; i < 3; i++) {
-            int bx = l.btnX[i];
-            if (mx >= bx && mx < bx + l.btnW && my >= l.btnY && my < l.btnY + l.btnH) {
-                event.setCanceled(true);
-                return;
-            }
+            if (mx >= l.btnX[i] && mx < l.btnX[i] + l.btnW && my >= l.btnY && my < l.btnY + l.btnH) { event.setCanceled(true); return; }
         }
 
-        // calc window drag start
         if (mx >= calcX - 5 && mx < calcX + CALC_WIDTH && my >= calcY - 5 && my < calcY + CALC_HEIGHT) {
-            dragTarget = 2;
-            dragStartX = mx; dragStartY = my;
-            dragOffsetX = mx - calcX; dragOffsetY = my - calcY;
-            isDragging = false;
-            event.setCanceled(true);
+            dragTarget = 2; dragStartX = mx; dragStartY = my; dragOffsetX = mx - calcX; dragOffsetY = my - calcY;
+            isDragging = false; event.setCanceled(true);
         }
     }
-        @SubscribeEvent
-        public static void onMouseButtonReleased(ScreenEvent.MouseButtonReleased.Pre event) {
-            Screen screen = event.getScreen();
-            if (!(screen instanceof AbstractContainerScreen<?> containerScreen)) return;
 
-            String cls = screen.getClass().getName();
-            if (!cls.contains("AnvilScreen") && !cls.contains("InventoryScreen")) return;
+    // ==========================================
+    // ЛОГИКА: Обработка кликов мыши (Отпускание кнопки)
+    // ==========================================
+    @SubscribeEvent
+    public static void onMouseButtonReleased(ScreenEvent.MouseButtonReleased.Pre event) {
+        Screen screen = event.getScreen();
+        if (!(screen instanceof AbstractContainerScreen containerScreen)) return;
 
-            if (event.getButton() != 0) return;
+        String cls = screen.getClass().getName();
+        if (!cls.contains("AnvilScreen") && !cls.contains("InventoryScreen")) return;
+        if (event.getButton() != 0) return;
 
-            int mx = (int) Math.round(event.getMouseX());
-            int my = (int) Math.round(event.getMouseY());
+        int mx = (int) Math.round(event.getMouseX());
+        int my = (int) Math.round(event.getMouseY());
 
-
-            if (dragTarget == 1) {
+        // Обработка отпускания маленькой кнопки оверлея
+        if (dragTarget == 1) {
             if (isDragging) savePositions();
-            else {
-                if (isOnMainButton(mx, my)) {
-                    overlayOpen = !overlayOpen;
-                    activeMenu = -1;
-                    activeInputField = -1;
-                }
-            }
-            dragTarget = 0;
-            isDragging = false;
-            event.setCanceled(true);
-            return;
+            else if (isOnMainButton(mx, my)) { overlayOpen = !overlayOpen; activeMenu = -1; activeInputField = -1; }
+            dragTarget = 0; isDragging = false; event.setCanceled(true); return;
         }
 
+        // Обработка перетаскивания самого окна калькулятора
         if (dragTarget == 2) {
-            if (isDragging) savePositions();
-            dragTarget = 0;
-            isDragging = false;
-            event.setCanceled(true);
+            if (isDragging) {
+                savePositions();
+                dragTarget = 0; isDragging = false; event.setCanceled(true);
+                return; // Выходим ТОЛЬКО если окно реально тащили мышкой
+            }
+            // Если это был обычный клик без перемещения - сбрасываем флаги
+            dragTarget = 0; isDragging = false;
         }
 
-            // Обработка нажатий на кнопки ТФК-наковальни
-            String clickedAction = getActionAt(mx, my, containerScreen);
-            if (clickedAction != null && !plannedActions.isEmpty() && currentStepIndex < plannedActions.size()) {
-                String expectedAction = plannedActions.get(currentStepIndex);
-
-                // Если нажали именно то, что просит калькулятор
-                if (clickedAction.equals(expectedAction)) {
-                    currentStepIndex++;
-                    System.out.println("[TfcAnvilHelper] Correct step! Next index: " + currentStepIndex);
-                } else {
-                    System.out.println("[TfcAnvilHelper] Wrong step! Clicked: " + clickedAction + ", Expected: " + expectedAction);
-                }
-                // Мы не отменяем событие, чтобы удар в ТФК засчитался в любом случае
-            }
-
-            if (!overlayOpen) return;
-
+        if (!overlayOpen) return;
         Layout l = layout();
 
-        // backspace
-        if (mx >= l.bsX && mx < l.bsX + l.bsW && my >= l.bsY && my < l.bsY + l.bsH) {
-            if (!targetNumber.isEmpty()) targetNumber = targetNumber.substring(0, targetNumber.length() - 1);
-            event.setCanceled(true);
-            return;
-        }
-
-        // action buttons
-        for (int i = 0; i < 3; i++) {
-            int bx = l.btnX[i];
-            if (mx >= bx && mx < bx + l.btnW && my >= l.btnY && my < l.btnY + l.btnH) {
-                activeMenu = (activeMenu == i) ? -1 : i;
-                activeInputField = -1;
-                event.setCanceled(true);
-                return;
-            }
-        }
-
-        // dropdown select
+        // Проверка клика по выпадающему списку
         if (activeMenu >= 0 && activeMenu < 3) {
             int menuX = l.btnX[activeMenu];
-            int menuY = l.btnY + l.btnH + 4;
+            int menuY = l.btnY + l.btnH + 2;
+
             if (mx >= menuX && mx < menuX + l.menuW && my >= menuY && my < menuY + (ACTIONS_LIST.length * l.itemH)) {
                 int idx = (my - menuY) / l.itemH;
                 if (idx >= 0 && idx < ACTIONS_LIST.length) {
                     String sel = ACTIONS_LIST[idx];
                     if (sel.equals("-")) sel = "";
 
-                    if (activeMenu == 0) {
-                        selectedAction1 = sel;
-                    } else if (activeMenu == 1) {
-                        selectedAction2 = sel;
-                    } else {
-                        selectedAction3 = sel;
-
-                    }
+                    if (activeMenu == 0) selectedAction1 = sel;
+                    else if (activeMenu == 1) selectedAction2 = sel;
+                    else selectedAction3 = sel;
                 }
+                activeMenu = -1;
+                event.setCanceled(true);
+                return;
             }
+
             activeMenu = -1;
+            event.setCanceled(true);
+            return;
         }
 
-        // calculate
+        // Перехват кликов по оригинальным кнопкам TFC наковальни
+        String clickedAction = getActionAt(mx, my, containerScreen);
+        if (clickedAction != null && !plannedActions.isEmpty() && currentStepIndex < plannedActions.size()) {
+            String expectedAction = plannedActions.get(currentStepIndex);
+            if (clickedAction.equals(expectedAction)) {
+                triggerStepAdvance();
+                System.out.println("[TfcAnvilHelper] Correct step! Next index: " + currentStepIndex);
+            }
+        }
+
+        // Кнопка Backspace "←"
+        if (mx >= l.bsX && mx < l.bsX + l.bsW && my >= l.bsY && my < l.bsY + l.bsH) {
+            if (!targetNumber.isEmpty()) targetNumber = targetNumber.substring(0, targetNumber.length() - 1);
+            event.setCanceled(true); return;
+        }
+
+        // Кнопки открытия подменю действий
+        for (int i = 0; i < 3; i++) {
+            int bx = l.btnX[i];
+            if (mx >= bx && mx < bx + l.btnW && my >= l.btnY && my < l.btnY + l.btnH) {
+                activeMenu = (activeMenu == i) ? -1 : i; activeInputField = -1; event.setCanceled(true); return;
+            }
+        }
+
+        // Кнопка "Рассчитать"
         if (mx >= l.calcBtnX && mx < l.calcBtnX + l.calcBtnW && my >= l.calcBtnY && my < l.calcBtnY + l.calcBtnH) {
-            performCalculation();
-            event.setCanceled(true);
+            performCalculation(); event.setCanceled(true);
         }
     }
 
-    // План шагов для пошагового вывода
     private static final List<String> plannedActions = new ArrayList<>();
     private static int currentStepIndex = 0;
 
@@ -681,12 +732,11 @@ public class AnvilOverlayHandler {
         }
         resultText = res.toString();
 
-        // Заполняем пошаговый план
         plannedActions.clear();
         plannedActions.addAll(solution);
         currentStepIndex = 0;
+        stepTransitionStart = 0L;
+        oldToastDisplay = "";
         System.out.println("[TfcAnvilHelper] plannedActions = " + plannedActions);
-
     }
-
 }
