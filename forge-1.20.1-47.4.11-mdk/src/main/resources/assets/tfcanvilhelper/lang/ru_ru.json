@@ -1,5 +1,11 @@
 {
-  "tfcanvilhelper.step.single": "Шаг: %s",
-  "tfcanvilhelper.step.next": "Шаг: %s → %s",
-  "tfcanvilhelper.ready": "Готово!"
+  "gui.tfcanvilhelper.target_number": "Целевое число:",
+  "gui.tfcanvilhelper.actions": "Действия:",
+  "gui.tfcanvilhelper.calculate": "Рассчитать",
+  "msg.tfcanvilhelper.enter_target": "Введите целевое число!",
+  "msg.tfcanvilhelper.invalid_number": "Неверное число",
+  "msg.tfcanvilhelper.no_solution": "Решение не найдено",
+  "msg.tfcanvilhelper.current_step": "Тек: %s (Далее: %s)",
+  "msg.tfcanvilhelper.last_step": "Последний шаг: %s",
+  "msg.tfcanvilhelper.done": "Готово! Нажми X для сброса"
 }

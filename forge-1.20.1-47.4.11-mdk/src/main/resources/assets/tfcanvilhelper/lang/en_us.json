@@ -1,0 +1,11 @@
+{
+  "gui.tfcanvilhelper.target_number": "Target number:",
+  "gui.tfcanvilhelper.actions": "Actions:",
+  "gui.tfcanvilhelper.calculate": "Calculate",
+  "msg.tfcanvilhelper.enter_target": "Enter a target number!",
+  "msg.tfcanvilhelper.invalid_number": "Invalid number",
+  "msg.tfcanvilhelper.no_solution": "No solution found",
+  "msg.tfcanvilhelper.current_step": "Cur: %s (Next: %s)",
+  "msg.tfcanvilhelper.last_step": "Last step: %s",
+  "msg.tfcanvilhelper.done": "Done! Press X to reset"
+}

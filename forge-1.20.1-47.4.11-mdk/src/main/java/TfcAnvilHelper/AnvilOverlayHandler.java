@@ -4,6 +4,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
+import net.minecraft.network.chat.Component;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.ScreenEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -252,12 +253,12 @@ public class AnvilOverlayHandler {
             if (stepIdx < plannedActions.size()) {
                 String current = plannedActions.get(stepIdx);
                 if (stepIdx + 1 < plannedActions.size()) {
-                    return "Тек: " + current + " (Далее: " + plannedActions.get(stepIdx + 1) + ")";
+                    return Component.translatable("msg.tfcanvilhelper.current_step", current, plannedActions.get(stepIdx + 1)).getString();
                 } else {
-                    return "Последний шаг: " + current;
+                    return Component.translatable("msg.tfcanvilhelper.last_step", current).getString();
                 }
             } else {
-                return "Готово! Нажми X для сброса";
+                return Component.translatable("msg.tfcanvilhelper.done").getString();
             }
         }
         return (resultText != null) ? resultText : "";
@@ -467,7 +468,7 @@ public class AnvilOverlayHandler {
         g.fill(winX1 - 1, winY0, winX1, winY1, COLOR_BORDER);
 
         // Поле ввода "Целевое число"
-        g.drawString(Minecraft.getInstance().font, "Целевое число:", calcX + 5, calcY + 5, 0xFFFFFF);
+        g.drawString(Minecraft.getInstance().font, Component.translatable("gui.tfcanvilhelper.target_number"), calcX + 5, calcY + 5, 0xFFFFFF);
         boolean inputHovered = mx >= l.inputX && mx < l.inputX + l.inputW && my >= l.inputY && my < l.inputY + l.inputH;
         int inputBg = (activeInputField == 0) ? 0xFF141416 : 0xFF1C1C1E;
         int inputBrd = (activeInputField == 0) ? COLOR_BORDER_HIGH : (inputHovered ? COLOR_BORDER_HIGH : COLOR_BORDER);
@@ -492,7 +493,7 @@ public class AnvilOverlayHandler {
         g.drawString(Minecraft.getInstance().font, "←", l.bsX + 2, l.bsY + 3, 0xFFFFFF);
 
         // 3 Слота закрепленных действий
-        g.drawString(Minecraft.getInstance().font, "Действия:", calcX + 5, calcY + 36, 0xFFFFFF);
+        g.drawString(Minecraft.getInstance().font, Component.translatable("gui.tfcanvilhelper.actions"), calcX + 5, calcY + 36, 0xFFFFFF);
         for (int i = 0; i < 3; i++) {
             int bx = l.btnX[i];
             boolean actHovered = mx >= bx && mx < bx + l.btnW && my >= l.btnY && my < l.btnY + l.btnH;
@@ -521,7 +522,7 @@ public class AnvilOverlayHandler {
         g.fill(l.calcBtnX, l.calcBtnY + l.calcBtnH - 1, l.calcBtnX + l.calcBtnW, l.calcBtnY + l.calcBtnH, COLOR_BTN_GREEN_BORDER);
         g.fill(l.calcBtnX, l.calcBtnY, l.calcBtnX + 1, l.calcBtnY + l.calcBtnH, COLOR_BTN_GREEN_BORDER);
         g.fill(l.calcBtnX + l.calcBtnW - 1, l.calcBtnY, l.calcBtnX + l.calcBtnW, l.calcBtnY + l.calcBtnH, COLOR_BTN_GREEN_BORDER);
-        g.drawCenteredString(Minecraft.getInstance().font, "Рассчитать", l.calcBtnX + l.calcBtnW / 2, l.calcBtnY + 3, 0xFFFFFF);
+        g.drawCenteredString(Minecraft.getInstance().font, Component.translatable("gui.tfcanvilhelper.calculate"), l.calcBtnX + l.calcBtnW / 2, l.calcBtnY + 3, 0xFFFFFF);
 
         // Открытый выпадающий список вариантов
         if (activeMenu >= 0 && activeMenu < 3) {
@@ -710,9 +711,17 @@ public class AnvilOverlayHandler {
     private static int currentStepIndex = 0;
 
     private static void performCalculation() {
-        if (targetNumber.isEmpty()) { resultText = "Введите целевое число!"; return; }
+        if (targetNumber.isEmpty()) {
+            resultText = Component.translatable("msg.tfcanvilhelper.enter_target").getString();
+            return;
+        }
         int target;
-        try { target = Integer.parseInt(targetNumber); } catch (Exception e) { resultText = "Неверное число"; return; }
+        try {
+            target = Integer.parseInt(targetNumber);
+        } catch (Exception e) {
+            resultText = Component.translatable("msg.tfcanvilhelper.invalid_number").getString();
+            return;
+        }
 
         List<String> lastThree = new ArrayList<>();
         if (!selectedAction1.isEmpty()) lastThree.add(selectedAction1);
@@ -720,7 +729,10 @@ public class AnvilOverlayHandler {
         if (!selectedAction3.isEmpty()) lastThree.add(selectedAction3);
 
         List<String> solution = AnvilCalculator.calculate(target, lastThree);
-        if (solution.isEmpty()) { resultText = "Решение не найдено"; return; }
+        if (solution.isEmpty()) {
+            resultText = Component.translatable("msg.tfcanvilhelper.no_solution").getString();
+            return;
+        }
 
         Map<String, Integer> counts = new LinkedHashMap<>();
         for (String action : solution) counts.put(action, counts.getOrDefault(action, 0) + 1);
